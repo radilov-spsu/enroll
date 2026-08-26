@@ -50,7 +50,7 @@ jobs:
               echo
               echo "| Поле | Значение |"
               echo "|---|---|"
-              echo "| ФИО | $FIO |"
+              echo "| Студент | $FIO |"
               echo "| Группа | $GROUP |"
               echo "| Репозиторий будет создан как | \`$NAME\` |"
               echo
