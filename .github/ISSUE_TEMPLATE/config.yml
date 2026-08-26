@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Материалы курсов
+    url: https://github.com/radilov-spsu/materials
+    about: Лекции, условия работ и примеры кода
+  - name: Не получается заполнить заявку
+    url: https://github.com/radilov-spsu/enroll#частые-вопросы
+    about: Частые вопросы и что делать, если робот ругается

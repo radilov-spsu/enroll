@@ -1,0 +1,105 @@
+name: Проверка заявки
+
+on:
+  issues:
+    types: [opened, edited]
+
+permissions:
+  issues: write
+  contents: read
+
+jobs:
+  check:
+    if: contains(github.event.issue.labels.*.name, 'заявка')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Разобрать заявку
+        id: parse
+        env:
+          BODY: ${{ github.event.issue.body }}
+          COURSE_YEAR: ${{ vars.COURSE_YEAR }}
+        run: |
+          set -uo pipefail
+          printf '%s' "$BODY" > "$RUNNER_TEMP/body.md"
+          if OUT=$(python scripts/parse_issue.py "$RUNNER_TEMP/body.md" 2>"$RUNNER_TEMP/err.txt"); then
+            printf '%s\n' "$OUT" >> "$GITHUB_OUTPUT"
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            cat "$RUNNER_TEMP/err.txt"
+          fi
+
+      - name: Собрать текст ответа
+        env:
+          OK: ${{ steps.parse.outputs.ok }}
+          NAME: ${{ steps.parse.outputs.repo_name }}
+          FIO: ${{ steps.parse.outputs.fio }}
+          GROUP: ${{ steps.parse.outputs.group }}
+        run: |
+          set -euo pipefail
+          {
+            echo "<!-- enroll-check -->"
+            if [ "$OK" = "true" ]; then
+              echo "### Заявка заполнена верно ✅"
+              echo
+              echo "| Поле | Значение |"
+              echo "|---|---|"
+              echo "| ФИО | $FIO |"
+              echo "| Группа | $GROUP |"
+              echo "| Репозиторий будет создан как | \`$NAME\` |"
+              echo
+              echo "Ожидайте: преподаватель проверит заявку и подтвердит её."
+              echo "Ссылка на ваш репозиторий появится здесь же."
+            else
+              echo "### В заявке есть ошибки ❌"
+              echo
+              cat "$RUNNER_TEMP/err.txt"
+              echo
+              echo "Нажмите **⋯ → Edit** в заголовке заявки, поправьте поля —"
+              echo "проверка запустится заново, создавать новую заявку не нужно."
+            fi
+          } > "$RUNNER_TEMP/comment.md"
+          cat "$RUNNER_TEMP/comment.md"
+
+      - name: Ответить в заявке
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          NUMBER: ${{ github.event.issue.number }}
+        run: |
+          set -euo pipefail
+          # Обновляем свой предыдущий комментарий, чтобы не плодить их при правках.
+          ID=$(gh api --paginate "repos/$REPO/issues/$NUMBER/comments" \
+                 --jq 'map(select(.body | startswith("<!-- enroll-check -->"))) | last | .id // empty')
+          if [ -n "$ID" ]; then
+            gh api -X PATCH "repos/$REPO/issues/comments/$ID" \
+              -F body=@"$RUNNER_TEMP/comment.md" >/dev/null
+          else
+            gh api -X POST "repos/$REPO/issues/$NUMBER/comments" \
+              -F body=@"$RUNNER_TEMP/comment.md" >/dev/null
+          fi
+
+      - name: Проставить метки и заголовок
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          NUMBER: ${{ github.event.issue.number }}
+          OK: ${{ steps.parse.outputs.ok }}
+          FIO: ${{ steps.parse.outputs.fio }}
+          GROUP: ${{ steps.parse.outputs.group }}
+        run: |
+          set -euo pipefail
+          if [ "$OK" = "true" ]; then
+            gh issue edit "$NUMBER" --repo "$REPO" \
+              --title "Заявка: $FIO, $GROUP" \
+              --remove-label "нужна правка" || true
+          else
+            gh issue edit "$NUMBER" --repo "$REPO" --add-label "нужна правка"
+            exit 1
+          fi

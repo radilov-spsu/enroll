@@ -1,0 +1,63 @@
+name: Заявка на курс
+description: Получить личный репозиторий для сдачи работ
+title: "Заявка: "
+labels: ["заявка"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Заполните форму — после проверки преподавателем вам автоматически
+        создадут **личный приватный репозиторий**, доступный только вам и
+        преподавателю. Ссылка придёт комментарием сюда же.
+
+        ФИО пишите **кириллицей, как в зачётке**. Транслитерацию для имени
+        репозитория робот сделает сам.
+
+  - type: input
+    id: last_name
+    attributes:
+      label: Фамилия
+      placeholder: Иванов
+    validations:
+      required: true
+
+  - type: input
+    id: first_name
+    attributes:
+      label: Имя
+      placeholder: Иван
+    validations:
+      required: true
+
+  - type: input
+    id: middle_name
+    attributes:
+      label: Отчество
+      description: Оставьте пустым, если отчества нет
+      placeholder: Иванович
+    validations:
+      required: false
+
+  - type: input
+    id: group
+    attributes:
+      label: Группа
+      placeholder: 21.Б09-мм
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: courses
+    attributes:
+      label: Курсы, на которые записываетесь
+      options:
+        - label: Объектно-ориентированный анализ и проектирование
+        - label: Технологии параллельного программирования
+
+  - type: markdown
+    attributes:
+      value: |
+        ---
+        После отправки робот в течение минуты ответит комментарием, всё ли
+        в порядке с заявкой. Если он найдёт ошибку — нажмите на заголовке
+        заявки **⋯ → Edit** и поправьте, проверка запустится заново.

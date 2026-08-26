@@ -1,0 +1,198 @@
+name: Создание репозитория студента
+
+# Запускается, когда преподаватель вешает метку «одобрено».
+# Ставить метки в этом репозитории могут только его администраторы,
+# поэтому студент не может одобрить сам себя.
+on:
+  issues:
+    types: [labeled]
+
+concurrency:
+  group: create-repo
+  cancel-in-progress: false
+
+permissions:
+  issues: write
+  contents: read
+
+jobs:
+  create:
+    if: github.event.label.name == 'одобрено'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Разобрать заявку
+        id: parse
+        env:
+          BODY: ${{ github.event.issue.body }}
+          COURSE_YEAR: ${{ vars.COURSE_YEAR }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$BODY" > "$RUNNER_TEMP/body.md"
+          python scripts/parse_issue.py "$RUNNER_TEMP/body.md" | tee -a "$GITHUB_OUTPUT"
+
+      - name: Создать репозиторий из шаблона
+        id: create
+        env:
+          GH_TOKEN: ${{ secrets.ORG_ADMIN_TOKEN }}
+          ORG: ${{ github.repository_owner }}
+          TEMPLATE: ${{ vars.TEMPLATE_REPO }}
+          REPO: ${{ steps.parse.outputs.repo_name }}
+          FIO: ${{ steps.parse.outputs.fio }}
+          GROUP: ${{ steps.parse.outputs.group }}
+          AUTHOR: ${{ github.event.issue.user.login }}
+        run: |
+          set -euo pipefail
+          if gh repo view "$ORG/$REPO" >/dev/null 2>&1; then
+            echo "Репозиторий $ORG/$REPO уже существует — пропускаю создание."
+            echo "created=false" >> "$GITHUB_OUTPUT"
+          else
+            gh api "repos/$ORG/$TEMPLATE/generate" \
+              -f owner="$ORG" \
+              -f name="$REPO" \
+              -f description="$FIO, группа $GROUP (@$AUTHOR)" \
+              -F private=true \
+              -F include_all_branches=false
+            echo "created=true" >> "$GITHUB_OUTPUT"
+          fi
+          echo "url=https://github.com/$ORG/$REPO" >> "$GITHUB_OUTPUT"
+
+      - name: Оставить только выбранные курсы
+        if: steps.create.outputs.created == 'true' && steps.parse.outputs.courses != ''
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.ORG_ADMIN_TOKEN }}
+          ORG: ${{ github.repository_owner }}
+          REPO: ${{ steps.parse.outputs.repo_name }}
+          COURSES: ${{ steps.parse.outputs.courses }}
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP"
+          gh repo clone "$ORG/$REPO" student -- -q
+          cd student
+          CHANGED=0
+          for dir in */; do
+            name="${dir%/}"
+            [ -d "$name" ] || continue
+            case ",$COURSES," in
+              *",$name,"*) continue ;;
+            esac
+            git rm -rq "$name"
+            # убрать строку курса из таблицы в корневом README
+            grep -v "](${name}/)" README.md > README.tmp && mv README.tmp README.md
+            CHANGED=1
+          done
+          if [ "$CHANGED" = "1" ]; then
+            git add README.md
+            git -c user.email=actions@github.com -c user.name=github-actions \
+              commit -qm "Оставлены только выбранные курсы"
+            git push -q origin HEAD
+          fi
+
+      - name: Выдать студенту доступ на запись
+        env:
+          GH_TOKEN: ${{ secrets.ORG_ADMIN_TOKEN }}
+          ORG: ${{ github.repository_owner }}
+          REPO: ${{ steps.parse.outputs.repo_name }}
+          AUTHOR: ${{ github.event.issue.user.login }}
+        run: |
+          set -euo pipefail
+          # push, а не admin: студент не сможет удалить репозиторий,
+          # сделать его публичным или снять защиту веток.
+          gh api -X PUT "repos/$ORG/$REPO/collaborators/$AUTHOR" -f permission=push
+
+      - name: Настроить репозиторий
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.ORG_ADMIN_TOKEN }}
+          ORG: ${{ github.repository_owner }}
+          REPO: ${{ steps.parse.outputs.repo_name }}
+          GROUP: ${{ steps.parse.outputs.group }}
+          YEAR: ${{ steps.parse.outputs.year }}
+        run: |
+          set -euo pipefail
+          gh api -X PATCH "repos/$ORG/$REPO" \
+            -F has_wiki=false -F has_projects=false \
+            -F allow_squash_merge=true -F allow_merge_commit=false \
+            -F allow_rebase_merge=false -F delete_branch_on_merge=true
+
+          GROUP_TOPIC=$(printf '%s' "$GROUP" | tr 'A-Z' 'a-z' | tr -cs 'a-z0-9' '-' | sed 's/^-//;s/-$//')
+          gh api -X PUT "repos/$ORG/$REPO/topics" \
+            -f "names[]=student-work" -f "names[]=year-$YEAR" \
+            ${GROUP_TOPIC:+-f "names[]=group-$GROUP_TOPIC"}
+
+      - name: Защитить ветку main
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.ORG_ADMIN_TOKEN }}
+          ORG: ${{ github.repository_owner }}
+          REPO: ${{ steps.parse.outputs.repo_name }}
+        run: |
+          set -euo pipefail
+          # На бесплатном тарифе защита веток в приватных репозиториях недоступна —
+          # шаг помечен continue-on-error и просто пропустится.
+          gh api -X POST "repos/$ORG/$REPO/rulesets" --input - <<'JSON'
+          {
+            "name": "protect-main",
+            "target": "branch",
+            "enforcement": "active",
+            "conditions": {"ref_name": {"include": ["~DEFAULT_BRANCH"], "exclude": []}},
+            "bypass_actors": [{"actor_id": 5, "actor_type": "RepositoryRole", "bypass_mode": "always"}],
+            "rules": [
+              {"type": "deletion"},
+              {"type": "non_fast_forward"},
+              {"type": "pull_request", "parameters": {
+                "required_approving_review_count": 1,
+                "dismiss_stale_reviews_on_push": false,
+                "require_code_owner_review": true,
+                "require_last_push_approval": false,
+                "required_review_thread_resolution": false,
+                "allowed_merge_methods": ["squash"]
+              }}
+            ]
+          }
+          JSON
+
+      - name: Ответить студенту и закрыть заявку
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO_FULL: ${{ github.repository }}
+          NUMBER: ${{ github.event.issue.number }}
+          AUTHOR: ${{ github.event.issue.user.login }}
+          URL: ${{ steps.create.outputs.url }}
+          NAME: ${{ steps.parse.outputs.repo_name }}
+        run: |
+          set -euo pipefail
+          gh issue comment "$NUMBER" --repo "$REPO_FULL" --body "$(cat <<EOF
+          @$AUTHOR, заявка принята ✅
+
+          Ваш личный репозиторий: **[$NAME]($URL)**
+
+          Что делать дальше:
+          1. На почту, привязанную к GitHub, придёт приглашение — примите его
+             (или откройте ссылку выше и нажмите **Accept invitation**).
+          2. Склонируйте репозиторий: \`git clone $URL.git\`
+          3. Прочитайте \`README.md\` внутри — там структура папок и правила сдачи работ.
+
+          Репозиторий приватный: он виден только вам и преподавателю.
+          EOF
+          )"
+          gh issue close "$NUMBER" --repo "$REPO_FULL" --reason completed
+          gh issue edit "$NUMBER" --repo "$REPO_FULL" --add-label "готово" || true
+
+      - name: Сообщить об ошибке
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO_FULL: ${{ github.repository }}
+          NUMBER: ${{ github.event.issue.number }}
+          RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          gh issue comment "$NUMBER" --repo "$REPO_FULL" \
+            --body "Не удалось создать репозиторий автоматически. Преподаватель разберётся вручную. Лог: $RUN"
+          gh issue edit "$NUMBER" --repo "$REPO_FULL" --remove-label "одобрено" || true
