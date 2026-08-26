@@ -94,9 +94,29 @@ jobs:
           AUTHOR: ${{ github.event.issue.user.login }}
         run: |
           set -euo pipefail
-          # push, а не admin: студент не сможет удалить репозиторий,
-          # сделать его публичным или снять защиту веток.
+          # push (в интерфейсе — Write), не выше: студент не должен уметь
+          # удалить репозиторий, сделать его публичным или позвать туда других.
           gh api -X PUT "repos/$ORG/$REPO/collaborators/$AUTHOR" -f permission=push
+
+          # Убеждаемся, что фактически выдано именно write.
+          # Пока приглашение не принято, уровень виден только в самом приглашении.
+          LEVEL=$(gh api "repos/$ORG/$REPO/invitations" \
+                    --jq "[.[] | select(.invitee.login == \"$AUTHOR\") | .permissions] | last // empty")
+          if [ -z "$LEVEL" ]; then
+            LEVEL=$(gh api "repos/$ORG/$REPO/collaborators/$AUTHOR/permission" --jq '.permission')
+          fi
+          echo "Выданный уровень доступа: $LEVEL"
+          case "$LEVEL" in
+            write) ;;
+            admin|maintain)
+              echo "::error::@$AUTHOR получил уровень $LEVEL вместо write."
+              echo "::error::Проверьте Base permissions организации и роль пользователя в ней."
+              exit 1
+              ;;
+            *)
+              echo "::warning::Неожиданный уровень доступа: $LEVEL"
+              ;;
+          esac
 
       - name: Настроить репозиторий
         continue-on-error: true
@@ -116,38 +136,6 @@ jobs:
           gh api -X PUT "repos/$ORG/$REPO/topics" \
             -f "names[]=student-work" -f "names[]=year-$YEAR" \
             ${GROUP_TOPIC:+-f "names[]=group-$GROUP_TOPIC"}
-
-      - name: Защитить ветку main
-        continue-on-error: true
-        env:
-          GH_TOKEN: ${{ secrets.ORG_ADMIN_TOKEN }}
-          ORG: ${{ github.repository_owner }}
-          REPO: ${{ steps.create.outputs.repo }}
-        run: |
-          set -euo pipefail
-          # На бесплатном тарифе защита веток в приватных репозиториях недоступна —
-          # шаг помечен continue-on-error и просто пропустится.
-          gh api -X POST "repos/$ORG/$REPO/rulesets" --input - <<'JSON'
-          {
-            "name": "protect-main",
-            "target": "branch",
-            "enforcement": "active",
-            "conditions": {"ref_name": {"include": ["~DEFAULT_BRANCH"], "exclude": []}},
-            "bypass_actors": [{"actor_id": 5, "actor_type": "RepositoryRole", "bypass_mode": "always"}],
-            "rules": [
-              {"type": "deletion"},
-              {"type": "non_fast_forward"},
-              {"type": "pull_request", "parameters": {
-                "required_approving_review_count": 1,
-                "dismiss_stale_reviews_on_push": false,
-                "require_code_owner_review": true,
-                "require_last_push_approval": false,
-                "required_review_thread_resolution": false,
-                "allowed_merge_methods": ["squash"]
-              }}
-            ]
-          }
-          JSON
 
       - name: Ответить студенту и закрыть заявку
         env:
