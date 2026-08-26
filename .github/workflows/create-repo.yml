@@ -118,6 +118,35 @@ jobs:
               ;;
           esac
 
+      - name: Добавить в команду группы
+        # Отключается переменной ENABLE_TEAMS=false.
+        # Не блокирует заявку: репозиторий к этому моменту уже создан и выдан.
+        if: vars.ENABLE_TEAMS != 'false'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.ORG_ADMIN_TOKEN }}
+          ORG: ${{ github.repository_owner }}
+          GROUP: ${{ steps.parse.outputs.group }}
+          YEAR: ${{ steps.parse.outputs.year }}
+          AUTHOR: ${{ github.event.issue.user.login }}
+        run: |
+          set -euo pipefail
+          SLUG=$(gh api --paginate "orgs/$ORG/teams" \
+                   --jq "[.[] | select(.name == \"$GROUP\") | .slug] | first // empty")
+          if [ -z "$SLUG" ]; then
+            echo "Создаю команду $GROUP"
+            SLUG=$(gh api -X POST "orgs/$ORG/teams" \
+                     -f name="$GROUP" \
+                     -f description="Группа $GROUP, набор $YEAR" \
+                     -f privacy=secret \
+                     --jq '.slug')
+          fi
+          echo "Команда: $SLUG"
+          # Добавление в команду одновременно приглашает студента в организацию,
+          # если он ещё не её участник. Роль member, не maintainer.
+          gh api -X PUT "orgs/$ORG/teams/$SLUG/memberships/$AUTHOR" -f role=member \
+            --jq '"состояние членства: \(.state), роль: \(.role)"'
+
       - name: Настроить репозиторий
         continue-on-error: true
         env:
@@ -153,8 +182,9 @@ jobs:
           Ваш личный репозиторий: **[$NAME]($URL)**
 
           Что делать дальше:
-          1. На почту, привязанную к GitHub, придёт приглашение — примите его
-             (или откройте ссылку выше и нажмите **Accept invitation**).
+          1. На почту, привязанную к GitHub, придут два приглашения — примите оба:
+             в репозиторий (кнопка **Accept invitation** по ссылке выше) и
+             в организацию, в команду вашей группы.
           2. Склонируйте репозиторий: \`git clone $URL.git\`
           3. Прочитайте \`README.md\` внутри — там структура папок и правила сдачи работ.
 
