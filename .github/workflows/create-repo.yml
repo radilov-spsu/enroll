@@ -104,7 +104,7 @@ jobs:
           GH_TOKEN: ${{ secrets.ORG_ADMIN_TOKEN }}
           ORG: ${{ github.repository_owner }}
           REPO: ${{ steps.create.outputs.repo }}
-          GROUP: ${{ steps.parse.outputs.group }}
+          GROUP_TOPIC: ${{ steps.parse.outputs.group_slug }}
           YEAR: ${{ steps.parse.outputs.year }}
         run: |
           set -euo pipefail
@@ -113,7 +113,6 @@ jobs:
             -F allow_squash_merge=true -F allow_merge_commit=false \
             -F allow_rebase_merge=false -F delete_branch_on_merge=true
 
-          GROUP_TOPIC=$(printf '%s' "$GROUP" | tr 'A-Z' 'a-z' | tr -cs 'a-z0-9' '-' | sed 's/^-//;s/-$//')
           gh api -X PUT "repos/$ORG/$REPO/topics" \
             -f "names[]=student-work" -f "names[]=year-$YEAR" \
             ${GROUP_TOPIC:+-f "names[]=group-$GROUP_TOPIC"}
