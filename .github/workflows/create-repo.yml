@@ -136,16 +136,20 @@ jobs:
           GH_TOKEN: ${{ secrets.ORG_ADMIN_TOKEN }}
           ORG: ${{ github.repository_owner }}
           GROUP: ${{ steps.parse.outputs.group }}
+          TEAM: ${{ steps.parse.outputs.group_slug }}
           YEAR: ${{ steps.parse.outputs.year }}
           AUTHOR: ${{ github.event.issue.user.login }}
         run: |
           set -euo pipefail
-          SLUG=$(gh api --paginate "orgs/$ORG/teams" \
-                   --jq "[.[] | select(.name == \"$GROUP\") | .slug] | first // empty")
-          if [ -z "$SLUG" ]; then
-            echo "Создаю команду $GROUP"
+          # Имя команды — транслит группы: GitHub строит slug, выбрасывая
+          # кириллицу, и «21.Б09-мм» превратилось бы в бессмысленное «21-09».
+          # Группа как в зачётке остаётся в описании команды.
+          if gh api "orgs/$ORG/teams/$TEAM" >/dev/null 2>&1; then
+            SLUG="$TEAM"
+          else
+            echo "Создаю команду $TEAM ($GROUP)"
             SLUG=$(gh api -X POST "orgs/$ORG/teams" \
-                     -f name="$GROUP" \
+                     -f name="$TEAM" \
                      -f description="Группа $GROUP, набор $YEAR" \
                      -f privacy=secret \
                      --jq '.slug')
