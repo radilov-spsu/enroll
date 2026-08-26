@@ -106,6 +106,15 @@ jobs:
             LEVEL=$(gh api "repos/$ORG/$REPO/collaborators/$AUTHOR/permission" --jq '.permission')
           fi
           echo "Выданный уровень доступа: $LEVEL"
+
+          # Владельцы и админы организации всегда имеют admin на всех её
+          # репозиториях — это не ошибка выдачи, а их роль в организации.
+          ORG_ROLE=$(gh api "orgs/$ORG/memberships/$AUTHOR" --jq '.role' 2>/dev/null || true)
+          if [ "$ORG_ROLE" = "admin" ]; then
+            echo "::warning::@$AUTHOR — администратор организации, поэтому уровень $LEVEL. Для студента был бы write."
+            exit 0
+          fi
+
           case "$LEVEL" in
             write) ;;
             admin|maintain)
