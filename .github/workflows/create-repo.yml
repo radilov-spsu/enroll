@@ -42,16 +42,36 @@ jobs:
           GH_TOKEN: ${{ secrets.ORG_ADMIN_TOKEN }}
           ORG: ${{ github.repository_owner }}
           TEMPLATE: ${{ vars.TEMPLATE_REPO }}
-          REPO: ${{ steps.parse.outputs.repo_name }}
+          BASE: ${{ steps.parse.outputs.repo_name }}
           FIO: ${{ steps.parse.outputs.fio }}
           GROUP: ${{ steps.parse.outputs.group }}
           AUTHOR: ${{ github.event.issue.user.login }}
         run: |
           set -euo pipefail
-          if gh repo view "$ORG/$REPO" >/dev/null 2>&1; then
-            echo "Репозиторий $ORG/$REPO уже существует — пропускаю создание."
+          # Без отчества однофамильцы с одинаковым именем дают одно и то же
+          # имя репозитория. Занятое имя не переиспользуем: если репозиторий
+          # принадлежит другому студенту, берём следующий свободный суффикс.
+          REPO="$BASE"
+          MINE=""
+          for N in 1 2 3 4 5 6 7 8 9 10; do
+            if ! gh repo view "$ORG/$REPO" >/dev/null 2>&1; then
+              break
+            fi
+            DESC=$(gh api "repos/$ORG/$REPO" --jq '.description // ""')
+            case "$DESC" in
+              *"(@$AUTHOR)"*) MINE=1; break ;;
+            esac
+            REPO="$BASE-$((N + 1))"
+          done
+
+          if [ -n "$MINE" ]; then
+            echo "Репозиторий $ORG/$REPO уже создан для @$AUTHOR — пропускаю создание."
             echo "created=false" >> "$GITHUB_OUTPUT"
           else
+            if gh repo view "$ORG/$REPO" >/dev/null 2>&1; then
+              echo "::error::Не удалось подобрать свободное имя для $BASE"
+              exit 1
+            fi
             gh api "repos/$ORG/$TEMPLATE/generate" \
               -f owner="$ORG" \
               -f name="$REPO" \
@@ -59,46 +79,18 @@ jobs:
               -F private=true \
               -F include_all_branches=false
             echo "created=true" >> "$GITHUB_OUTPUT"
+            if [ "$REPO" != "$BASE" ]; then
+              echo "::warning::Имя $BASE занято однофамильцем, взято $REPO"
+            fi
           fi
+          echo "repo=$REPO" >> "$GITHUB_OUTPUT"
           echo "url=https://github.com/$ORG/$REPO" >> "$GITHUB_OUTPUT"
-
-      - name: Оставить только выбранные курсы
-        if: steps.create.outputs.created == 'true' && steps.parse.outputs.courses != ''
-        continue-on-error: true
-        env:
-          GH_TOKEN: ${{ secrets.ORG_ADMIN_TOKEN }}
-          ORG: ${{ github.repository_owner }}
-          REPO: ${{ steps.parse.outputs.repo_name }}
-          COURSES: ${{ steps.parse.outputs.courses }}
-        run: |
-          set -euo pipefail
-          cd "$RUNNER_TEMP"
-          gh repo clone "$ORG/$REPO" student -- -q
-          cd student
-          CHANGED=0
-          for dir in */; do
-            name="${dir%/}"
-            [ -d "$name" ] || continue
-            case ",$COURSES," in
-              *",$name,"*) continue ;;
-            esac
-            git rm -rq "$name"
-            # убрать строку курса из таблицы в корневом README
-            grep -v "](${name}/)" README.md > README.tmp && mv README.tmp README.md
-            CHANGED=1
-          done
-          if [ "$CHANGED" = "1" ]; then
-            git add README.md
-            git -c user.email=actions@github.com -c user.name=github-actions \
-              commit -qm "Оставлены только выбранные курсы"
-            git push -q origin HEAD
-          fi
 
       - name: Выдать студенту доступ на запись
         env:
           GH_TOKEN: ${{ secrets.ORG_ADMIN_TOKEN }}
           ORG: ${{ github.repository_owner }}
-          REPO: ${{ steps.parse.outputs.repo_name }}
+          REPO: ${{ steps.create.outputs.repo }}
           AUTHOR: ${{ github.event.issue.user.login }}
         run: |
           set -euo pipefail
@@ -111,7 +103,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.ORG_ADMIN_TOKEN }}
           ORG: ${{ github.repository_owner }}
-          REPO: ${{ steps.parse.outputs.repo_name }}
+          REPO: ${{ steps.create.outputs.repo }}
           GROUP: ${{ steps.parse.outputs.group }}
           YEAR: ${{ steps.parse.outputs.year }}
         run: |
@@ -131,7 +123,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.ORG_ADMIN_TOKEN }}
           ORG: ${{ github.repository_owner }}
-          REPO: ${{ steps.parse.outputs.repo_name }}
+          REPO: ${{ steps.create.outputs.repo }}
         run: |
           set -euo pipefail
           # На бесплатном тарифе защита веток в приватных репозиториях недоступна —
@@ -165,7 +157,7 @@ jobs:
           NUMBER: ${{ github.event.issue.number }}
           AUTHOR: ${{ github.event.issue.user.login }}
           URL: ${{ steps.create.outputs.url }}
-          NAME: ${{ steps.parse.outputs.repo_name }}
+          NAME: ${{ steps.create.outputs.repo }}
         run: |
           set -euo pipefail
           gh issue comment "$NUMBER" --repo "$REPO_FULL" --body "$(cat <<EOF
