@@ -100,6 +100,7 @@ jobs:
               --title "Заявка: $FIO, $GROUP" \
               --remove-label "нужна правка" || true
           else
+            # не падаем: студент уже получил комментарий с разбором ошибок,
+            # красный workflow только слал бы вам письма
             gh issue edit "$NUMBER" --repo "$REPO" --add-label "нужна правка"
-            exit 1
           fi
