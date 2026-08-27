@@ -1,0 +1,139 @@
+name: Проверка токена
+
+# Самый вероятный тихий отказ: ORG_ADMIN_TOKEN протух или потерял права.
+# Регистрация продолжает отвечать на заявки, но репозитории не создаются.
+# Эта проверка ловит такое заранее и заводит issue.
+on:
+  schedule:
+    - cron: '17 6 * * 1'   # каждый понедельник, 06:17 UTC
+  workflow_dispatch:
+
+permissions:
+  issues: write
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Проверить токен и права
+        id: check
+        env:
+          GH_TOKEN: ${{ secrets.ORG_ADMIN_TOKEN }}
+          ORG: ${{ github.repository_owner }}
+          TEMPLATE: ${{ vars.TEMPLATE_REPO }}
+        run: |
+          set -uo pipefail
+          PROBLEMS=""
+          note() { PROBLEMS="${PROBLEMS}- $1"$'\n'; }
+
+          if [ -z "${GH_TOKEN:-}" ]; then
+            note "секрет **ORG_ADMIN_TOKEN** не задан в репозитории"
+            echo "problems<<EOF" >> "$GITHUB_OUTPUT"
+            printf '%s' "$PROBLEMS" >> "$GITHUB_OUTPUT"
+            echo "EOF" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # 1. Токен вообще жив и видит организацию.
+          if ! gh api "orgs/$ORG" >/dev/null 2>"$RUNNER_TEMP/err"; then
+            note "токен не может прочитать организацию: \`$(head -c 200 "$RUNNER_TEMP/err")\`"
+          fi
+
+          # 2. Шаблон доступен и остаётся шаблоном — иначе generate упадёт.
+          IS_TEMPLATE=$(gh api "repos/$ORG/$TEMPLATE" --jq '.is_template' 2>/dev/null || echo "")
+          case "$IS_TEMPLATE" in
+            true) ;;
+            false) note "репозиторий **$TEMPLATE** перестал быть template repository" ;;
+            *)     note "токен не видит репозиторий-шаблон **$TEMPLATE**" ;;
+          esac
+
+          # 3. Права на администрирование — ими создаются репозитории студентов.
+          ADMIN=$(gh api "repos/$ORG/$TEMPLATE" --jq '.permissions.admin' 2>/dev/null || echo "")
+          if [ "$ADMIN" != "true" ]; then
+            note "у токена нет права **Administration: write** — репозитории создаваться не будут"
+          fi
+
+          # 4. Срок жизни: GitHub отдаёт его заголовком при любом запросе.
+          EXPIRY=$(gh api --include "orgs/$ORG" 2>/dev/null \
+                    | grep -i '^github-authentication-token-expiration:' \
+                    | cut -d' ' -f2- | tr -d '\r' || true)
+          if [ -n "$EXPIRY" ]; then
+            echo "Токен истекает: $EXPIRY"
+            EXP_TS=$(date -u -d "$(printf '%s' "$EXPIRY" | sed 's/ UTC$//')" +%s 2>/dev/null || echo "")
+            if [ -n "$EXP_TS" ]; then
+              DAYS=$(( (EXP_TS - $(date -u +%s)) / 86400 ))
+              echo "Осталось дней: $DAYS"
+              if [ "$DAYS" -lt 0 ]; then
+                note "токен **истёк** ($EXPIRY)"
+              elif [ "$DAYS" -le 21 ]; then
+                note "токен истекает через **$DAYS дн.** ($EXPIRY) — пора выпустить новый"
+              fi
+            fi
+          else
+            echo "Срок жизни не указан (токен без истечения или GitHub App)."
+          fi
+
+          echo "problems<<EOF" >> "$GITHUB_OUTPUT"
+          printf '%s' "$PROBLEMS" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+
+      - name: Завести или обновить issue
+        if: steps.check.outputs.problems != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PROBLEMS: ${{ steps.check.outputs.problems }}
+          RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          MARKER="<!-- token-canary -->"
+          {
+            echo "$MARKER"
+            echo "## Регистрация студентов под угрозой"
+            echo
+            echo "Еженедельная проверка нашла проблемы с \`ORG_ADMIN_TOKEN\`:"
+            echo
+            printf '%s\n' "$PROBLEMS"
+            echo "Пока это не починить, заявки будут проверяться, но репозитории"
+            echo "студентам создаваться не будут."
+            echo
+            echo "**Что делать:** выпустить новый fine-grained PAT"
+            echo "(Resource owner: организация, All repositories, Administration + Contents:"
+            echo "Read and write, Organization → Members: Read and write) и выполнить:"
+            echo
+            echo '```'
+            echo "gh secret set ORG_ADMIN_TOKEN --repo $REPO"
+            echo '```'
+            echo
+            echo "Лог проверки: $RUN"
+          } > "$RUNNER_TEMP/body.md"
+
+          NUMBER=$(gh api --paginate "repos/$REPO/issues?state=open&labels=инфраструктура" \
+                     --jq "[.[] | select(.body | startswith(\"$MARKER\")) | .number] | first // empty")
+          if [ -n "$NUMBER" ]; then
+            gh api -X PATCH "repos/$REPO/issues/$NUMBER" -F body=@"$RUNNER_TEMP/body.md" >/dev/null
+            echo "Обновлён issue #$NUMBER"
+          else
+            gh issue create --repo "$REPO" \
+              --title "Проблема с токеном регистрации" \
+              --label "инфраструктура" \
+              --body-file "$RUNNER_TEMP/body.md"
+          fi
+
+      - name: Закрыть issue, если всё починено
+        if: steps.check.outputs.problems == ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          MARKER="<!-- token-canary -->"
+          NUMBER=$(gh api --paginate "repos/$REPO/issues?state=open&labels=инфраструктура" \
+                     --jq "[.[] | select(.body | startswith(\"$MARKER\")) | .number] | first // empty")
+          if [ -n "$NUMBER" ]; then
+            gh issue comment "$NUMBER" --repo "$REPO" --body "Токен снова в порядке — закрываю."
+            gh issue close "$NUMBER" --repo "$REPO" --reason completed
+          else
+            echo "Токен в порядке."
+          fi
