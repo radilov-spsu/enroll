@@ -48,16 +48,47 @@ jobs:
           git commit -m "Группа нового набора: $GROUP"
           git push
 
+      - name: Завести команду группы
+        if: steps.add.outputs.changed == 'true'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.ORG_ADMIN_TOKEN }}
+          ORG: ${{ github.repository_owner }}
+          GROUP: ${{ steps.add.outputs.group }}
+        run: |
+          set -euo pipefail
+          # Команда создаётся и при первой заявке от группы, но заводим её
+          # заранее: так группа видна в организации ещё до регистраций.
+          TEAM=$(python3 -c "import sys; sys.path.insert(0, 'scripts'); from translit import translit; print(translit('$GROUP'))")
+          if gh api "orgs/$ORG/teams/$TEAM" >/dev/null 2>&1; then
+            echo "Команда $TEAM уже существует."
+          else
+            gh api -X POST "orgs/$ORG/teams" \
+              -f name="$TEAM" \
+              -f description="Группа $GROUP, набор ${GROUP//[^0-9]/}" \
+              -f privacy=secret \
+              --jq '"создана команда \(.slug)"'
+          fi
+
       - name: Отчёт
         env:
           CHANGED: ${{ steps.add.outputs.changed }}
           GROUP: ${{ steps.add.outputs.group }}
+          DROPPED: ${{ steps.add.outputs.dropped }}
         run: |
-          if [ "$CHANGED" = "true" ]; then
-            echo "### Добавлена группа \`$GROUP\`" >> "$GITHUB_STEP_SUMMARY"
-            echo "" >> "$GITHUB_STEP_SUMMARY"
-            echo "Она уже доступна в форме заявки. Группы, которые выпустились," >> "$GITHUB_STEP_SUMMARY"
-            echo "убирайте из списка вручную — автоматика этого не делает." >> "$GITHUB_STEP_SUMMARY"
-          else
+          if [ "$CHANGED" != "true" ]; then
             echo "Группа текущего набора уже есть в списке." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
           fi
+          {
+            echo "### Добавлена группа \`$GROUP\`"
+            echo
+            echo "Она доступна в форме заявки, команда организации заведена."
+            if [ -n "$DROPPED" ]; then
+              echo
+              echo "Убраны из списка как выпустившиеся: \`$DROPPED\`."
+              echo
+              echo "Команды и репозитории этих групп не тронуты — работы остаются"
+              echo "на месте, из формы убран только выбор."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY" 
