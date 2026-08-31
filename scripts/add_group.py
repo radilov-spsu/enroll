@@ -90,6 +90,7 @@ def main() -> None:
     open(args.form, 'w', encoding='utf-8').write(text)
     print('changed=true')
     print(f'group={group}')
+    print(f'year={year}')
     print(f'dropped={",".join(dropped)}')
 
 
