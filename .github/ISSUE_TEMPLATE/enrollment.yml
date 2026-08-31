@@ -30,11 +30,18 @@ body:
     validations:
       required: true
 
-  - type: input
+  # Список групп пополняется автоматически каждое лето
+  # (.github/workflows/new-group.yml). Порядок: новые наборы сверху.
+  - type: dropdown
     id: group
     attributes:
       label: Группа
-      placeholder: 21.Б09-мм
+      description: Выберите свою группу. Нет в списке — напишите преподавателю.
+      options:
+        - ФТ26ДР62ПФ
+        - ФТ25ДР62ПФ
+        - ФТ24ДР62ПФ
+        - ФТ23ДР62ПФ
     validations:
       required: true
 

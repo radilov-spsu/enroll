@@ -1,0 +1,63 @@
+name: Новая учебная группа
+
+# Каждое лето в списке групп появляется набор нового года.
+# Формат имени задан в scripts/add_group.py; если он изменится — править там.
+on:
+  schedule:
+    - cron: '0 4 1 8 *'   # 1 августа
+  workflow_dispatch:
+    inputs:
+      year:
+        description: 'Год набора (по умолчанию текущий)'
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  add:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Добавить группу в форму заявки
+        id: add
+        run: |
+          set -euo pipefail
+          ARGS=""
+          if [ -n "${{ inputs.year }}" ]; then
+            ARGS="--year ${{ inputs.year }}"
+          fi
+          python3 scripts/add_group.py $ARGS | tee "$RUNNER_TEMP/out.txt"
+          grep -E '^(changed|group)=' "$RUNNER_TEMP/out.txt" >> "$GITHUB_OUTPUT" || true
+
+      - name: Закоммитить
+        if: steps.add.outputs.changed == 'true'
+        env:
+          GROUP: ${{ steps.add.outputs.group }}
+        run: |
+          set -euo pipefail
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .github/ISSUE_TEMPLATE/enrollment.yml
+          git commit -m "Группа нового набора: $GROUP"
+          git push
+
+      - name: Отчёт
+        env:
+          CHANGED: ${{ steps.add.outputs.changed }}
+          GROUP: ${{ steps.add.outputs.group }}
+        run: |
+          if [ "$CHANGED" = "true" ]; then
+            echo "### Добавлена группа \`$GROUP\`" >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "Она уже доступна в форме заявки. Группы, которые выпустились," >> "$GITHUB_STEP_SUMMARY"
+            echo "убирайте из списка вручную — автоматика этого не делает." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "Группа текущего набора уже есть в списке." >> "$GITHUB_STEP_SUMMARY"
+          fi
