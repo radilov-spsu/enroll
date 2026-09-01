@@ -85,6 +85,24 @@ jobs:
               -F body=@"$RUNNER_TEMP/comment.md" >/dev/null
           fi
 
+      - name: Назначить преподавателя исполнителем
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          NUMBER: ${{ github.event.issue.number }}
+          TEACHER: Nemo-Illusionist
+        run: |
+          set -euo pipefail
+          # Форма заявки уже указывает преподавателя в assignees, но GitHub
+          # применяет это поле не всегда: у автора заявки нет прав на запись
+          # в репозиторий. Дублируем от имени робота — уведомление
+          # о назначении приходит независимо от настроек подписки.
+          if gh issue edit "$NUMBER" --repo "$REPO" --add-assignee "$TEACHER"; then
+            echo "Заявка назначена на @$TEACHER."
+          else
+            echo "::warning::Не удалось назначить @$TEACHER исполнителем заявки #$NUMBER."
+          fi
+
       - name: Проставить метки и заголовок
         env:
           GH_TOKEN: ${{ github.token }}
