@@ -41,12 +41,20 @@ def academic_year() -> str:
     return str(now.year if now.month >= 8 else now.year - 1)
 
 
-def repo_name(parts, year: str) -> str:
-    """parts — [фамилия, имя, отчество]; отчество может отсутствовать."""
+def repo_name(parts, group_slug: str) -> str:
+    """Имя репозитория студента: фамилия-имя-группа транслитом.
+
+    parts — [фамилия, имя, отчество]; отчество может отсутствовать.
+    Группа, а не год: она не меняется за время обучения, поэтому репозиторий
+    у студента остаётся один на все курсы, а номер набора и так закодирован
+    в её названии (ФТ23… — набор 2023). Год набора живёт в топике year-*.
+    """
     slug = '-'.join(p for p in (translit(x) for x in parts) if p)
     if not slug:
         raise ValueError("Не удалось построить имя репозитория из ФИО")
-    name = f"{slug}-{year}"
+    if not group_slug:
+        raise ValueError("Не удалось построить имя репозитория: пустая группа")
+    name = f"{slug}-{group_slug}"
     if len(name) > 100:  # лимит GitHub на имя репозитория
-        name = f"{slug[:100 - len(year) - 1]}-{year}"
+        name = f"{slug[:100 - len(group_slug) - 1]}-{group_slug}"
     return name

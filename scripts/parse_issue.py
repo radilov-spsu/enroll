@@ -81,12 +81,13 @@ def main() -> None:
         sys.exit(1)
 
     year = academic_year()
-    name = repo_name(parts, year)
+    group_slug = translit(group)
+    name = repo_name(parts, group_slug)
 
     print(f"repo_name={name}")
     print(f"fio={' '.join(parts)}")
     print(f"group={group}")
-    print(f"group_slug={translit(group)}")
+    print(f"group_slug={group_slug}")
     print(f"year={year}")
 
 
