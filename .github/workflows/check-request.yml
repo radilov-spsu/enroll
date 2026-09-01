@@ -23,7 +23,6 @@ jobs:
         id: parse
         env:
           BODY: ${{ github.event.issue.body }}
-          COURSE_YEAR: ${{ vars.COURSE_YEAR }}
         run: |
           set -uo pipefail
           printf '%s' "$BODY" > "$RUNNER_TEMP/body.md"

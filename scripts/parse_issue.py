@@ -11,7 +11,7 @@
 import re
 import sys
 
-from translit import academic_year, repo_name, translit
+from translit import intake_year, repo_name, translit
 
 # Заголовок в теле issue -> внутреннее имя поля.
 FIELDS = {
@@ -80,8 +80,8 @@ def main() -> None:
         print('\n'.join(f"- {e}" for e in errors), file=sys.stderr)
         sys.exit(1)
 
-    year = academic_year()
     group_slug = translit(group)
+    year = intake_year(group)
     name = repo_name(parts, group_slug)
 
     print(f"repo_name={name}")

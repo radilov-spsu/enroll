@@ -30,7 +30,6 @@ jobs:
         id: parse
         env:
           BODY: ${{ github.event.issue.body }}
-          COURSE_YEAR: ${{ vars.COURSE_YEAR }}
         run: |
           set -euo pipefail
           printf '%s' "$BODY" > "$RUNNER_TEMP/body.md"
@@ -167,7 +166,6 @@ jobs:
           ORG: ${{ github.repository_owner }}
           REPO: ${{ steps.create.outputs.repo }}
           GROUP_TOPIC: ${{ steps.parse.outputs.group_slug }}
-          YEAR: ${{ steps.parse.outputs.year }}
         run: |
           set -euo pipefail
           # Работа сдаётся одним PR и вливается squash-ом: в main остаётся
@@ -182,8 +180,10 @@ jobs:
             -f squash_merge_commit_message=PR_BODY \
             -F allow_update_branch=true
 
+          # Топика с годом нет: набор читается из группы (ФТ23… — набор 2023),
+          # а рассылка заданий фильтрует по group-*.
           gh api -X PUT "repos/$ORG/$REPO/topics" \
-            -f "names[]=student-work" -f "names[]=year-$YEAR" \
+            -f "names[]=student-work" \
             ${GROUP_TOPIC:+-f "names[]=group-$GROUP_TOPIC"}
 
       - name: Ответить студенту и закрыть заявку

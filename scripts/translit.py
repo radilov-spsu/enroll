@@ -1,7 +1,5 @@
 """Транслитерация ФИО и сборка имени репозитория. Используется parse_issue.py."""
-import os
 import re
-from datetime import datetime, timezone
 
 # Практическая транслитерация (паспортного типа, но с привычными yu/ya/y).
 MAP = {
@@ -27,18 +25,17 @@ def translit(text: str) -> str:
     return re.sub(r'-+', '-', ''.join(out)).strip('-')
 
 
-def academic_year() -> str:
-    """Учебный год: с августа считается уже следующий.
+def intake_year(group: str) -> str:
+    """Год набора из названия группы: ФТ23ДР62ПФ → 2023.
 
-    Переопределяется переменной репозитория COURSE_YEAR.
+    Берём первые две цифры: в «ФТ23ДР62ПФ» есть и 62, но набор кодируют
+    первым числом. Календарный год здесь не годится — группа ФТ23 остаётся
+    набором 2023 и когда регистрируется на третьем курсе.
     """
-    env = os.environ.get('COURSE_YEAR', '').strip()
-    if env:
-        if not re.fullmatch(r'[0-9]{4}(-[0-9]{2,4})?', env):
-            raise ValueError(f"COURSE_YEAR имеет недопустимый формат: {env!r}")
-        return env
-    now = datetime.now(timezone.utc)
-    return str(now.year if now.month >= 8 else now.year - 1)
+    m = re.search(r'(\d{2})', group)
+    if not m:
+        return ''
+    return f"20{m.group(1)}"
 
 
 def repo_name(parts, group_slug: str) -> str:
@@ -47,7 +44,7 @@ def repo_name(parts, group_slug: str) -> str:
     parts — [фамилия, имя, отчество]; отчество может отсутствовать.
     Группа, а не год: она не меняется за время обучения, поэтому репозиторий
     у студента остаётся один на все курсы, а номер набора и так закодирован
-    в её названии (ФТ23… — набор 2023). Год набора живёт в топике year-*.
+    в её названии (ФТ23… — набор 2023).
     """
     slug = '-'.join(p for p in (translit(x) for x in parts) if p)
     if not slug:
