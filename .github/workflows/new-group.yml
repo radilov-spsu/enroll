@@ -56,6 +56,7 @@ jobs:
           ORG: ${{ github.repository_owner }}
           GROUP: ${{ steps.add.outputs.group }}
           YEAR: ${{ steps.add.outputs.year }}
+          TEACHER: Nemo-Illusionist
         run: |
           set -euo pipefail
           # Команда создаётся и при первой заявке от группы, но заводим её
@@ -64,11 +65,20 @@ jobs:
           if gh api "orgs/$ORG/teams/$TEAM" >/dev/null 2>&1; then
             echo "Команда $TEAM уже существует."
           else
-            gh api -X POST "orgs/$ORG/teams" \
-              -f name="$TEAM" \
-              -f description="Группа $GROUP, набор $YEAR" \
-              -f privacy=secret \
-              --jq '"создана команда \(.slug)"'
+            SLUG=$(gh api -X POST "orgs/$ORG/teams" \
+                     -f name="$TEAM" \
+                     -f description="Группа $GROUP, набор $YEAR" \
+                     -f privacy=secret \
+                     --jq '.slug')
+            echo "Создана команда $SLUG."
+            # GitHub делает создателя команды maintainer'ом. Преподавателю
+            # это членство не нужно: команды ни к чему не привязаны, доступ
+            # к работам даёт роль владельца организации.
+            if gh api -X DELETE "orgs/$ORG/teams/$SLUG/memberships/$TEACHER" >/dev/null 2>&1; then
+              echo "Преподаватель ($TEACHER) убран из команды $SLUG."
+            else
+              echo "::warning::Не удалось убрать $TEACHER из команды $SLUG."
+            fi
           fi
 
       - name: Отчёт

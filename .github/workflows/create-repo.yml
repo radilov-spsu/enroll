@@ -138,6 +138,7 @@ jobs:
           TEAM: ${{ steps.parse.outputs.group_slug }}
           YEAR: ${{ steps.parse.outputs.year }}
           AUTHOR: ${{ github.event.issue.user.login }}
+          TEACHER: Nemo-Illusionist
         run: |
           set -euo pipefail
           # Имя команды — транслит группы: GitHub строит slug, выбрасывая
@@ -152,6 +153,14 @@ jobs:
                      -f description="Группа $GROUP, набор $YEAR" \
                      -f privacy=secret \
                      --jq '.slug')
+            # GitHub делает создателя команды maintainer'ом. Преподавателю
+            # это членство не нужно: команды ни к чему не привязаны, доступ
+            # к работам даёт роль владельца организации.
+            if gh api -X DELETE "orgs/$ORG/teams/$SLUG/memberships/$TEACHER" >/dev/null 2>&1; then
+              echo "Преподаватель ($TEACHER) убран из команды $SLUG."
+            else
+              echo "::warning::Не удалось убрать $TEACHER из команды $SLUG."
+            fi
           fi
           echo "Команда: $SLUG"
           # Добавление в команду одновременно приглашает студента в организацию,
