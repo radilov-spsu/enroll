@@ -195,6 +195,26 @@ jobs:
             -f "names[]=student-work" \
             ${GROUP_TOPIC:+-f "names[]=group-$GROUP_TOPIC"}
 
+      - name: Попросить ops раздать задания группы
+        # Новый репозиторий должен получить все задания, которые группа уже
+        # получила раньше. Раздачей занимается ops/sync-tasks.yml: он же
+        # ходит по расписанию, поэтому сбой этого шага лишь откладывает
+        # выдачу до утра, а не теряет её.
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.ORG_ADMIN_TOKEN }}
+          ORG: ${{ github.repository_owner }}
+          REPO: ${{ steps.create.outputs.repo }}
+        run: |
+          set -uo pipefail
+          if gh api -X POST "repos/$ORG/ops/dispatches" \
+               -f event_type=student-repo-created \
+               -F "client_payload[repo]=$REPO" >/dev/null 2>&1; then
+            echo "Сигнал в ops отправлен — задания группы будут выданы."
+          else
+            echo "::warning::Не удалось сигналить в ops; задания выдаст суточная синхронизация."
+          fi
+
       - name: Ответить студенту и закрыть заявку
         env:
           GH_TOKEN: ${{ github.token }}
